@@ -4,7 +4,7 @@ import os
 import datetime
 
 #定义log函数
-def mylog(logpath='G:\\'):
+def mylog(logpath='F:\\'):
     '''this moduel is to avoid printing log repeatly'''
     import logging.handlers
     logger = logging.getLogger('DBA')#logger名称
@@ -69,7 +69,7 @@ mdf=pd.read_sql(m_query,engine,index_col='td')
 
 #将涨幅过高的数据删掉（就是有些新股首日以及数据长度太短的删掉）
 #透视表
-pmdf=pd.pivot_table(mdf/100,index=mdf.index,columns="codenum",values='chg')
+pmdf=pd.pivot_table(mdf,index=mdf.index,columns="codenum",values='chg')
 pmdf=pmdf/100  #单位修正
 pmdf.fillna(0,inplace=True)
 #计算累计净值
@@ -80,40 +80,60 @@ netvalue_MA20=netvalue.rolling(20).mean()
 #开始个股处理
 code = netvalue.columns
 for c in code:
-	cdf=pd.concat([netvalue[c],netvalue_MA5[c],netvalue_MA10[c],netvalue_MA10[c]],axis=1)
-	cdf.fillna(0,inplace=True)
-	cdf_std = cdf.std(axis=1)
-	bench_Z = netvalue[c][cdf_std<0.01]
-	bench_Z = bench_Z.reindex(netvalue[c].index,method='ffill')#数据对齐
-	prior_z = bench_Z/netvalue[c]
-	prior_z.fillna(1,inplace=True)#将没有数据的地方填充成1
-	df_need=pd.concat([netvalue[c],bench_Z,prior_z],axis=1)
-	#抽取月底数据
-	df_need.index=pd.to_datetime(df_need.index,format="%Y%m%d")
-	month=np.unique(df_need.index.strftime("%Y-%m"))#获得所有的月份
-	#逐个月份提取数据
-	monthend=[]
-	for m in month:
-		monthend.append(df_need[m].index[-1].strftime("%Y-%m-%d"))
-	#得到每个月的月底数据
-	df_month_need = df_need.reindex(pd.to_datetime(monthend, format="%Y-%m-%d"))
-	df_month_need.columns=['Price','Z','ZtoPrice']
-	#加入宏观数据
-	df_month_need.index = df_month_need.index.strftime("%Y-%m")
-	excel_df.index = excel_df.index.strftime("%Y-%m")
-	df_month_need = df_month_need.reindex(excel_df.index)
-	df_month_need[['CPI','rf']] = excel_df
-	df_month_need.dropna(axis=0,inplace=True)
-	#需要错开时间处理（非常重要）
-	df_new_month=df_month_need.iloc[:-1]
-	df_new_month.index=df_month_need.index[1:]
-	df_new_month.insert(3,'R_t1',df_month_need.Price.pct_change())
-	#---------------------开始计算风险偏好-----------------
-	#consumption-消费
-	consumption=np.cumprod(1+df_new_month.CPI)
-	#区间收益（就是这个月的收益）
-	rt=df_new_month.R_t1
-	#投资效用uv
-	uv = (1+df_new_month.rf)-rt*np.power(consumption,0.6)
-	for td in
+    cdf=pd.concat([netvalue[c],netvalue_MA5[c],netvalue_MA10[c],netvalue_MA10[c]],axis=1)
+    cdf.fillna(0,inplace=True)
+    cdf_std = cdf.std(axis=1)
+    bench_Z = netvalue[c][cdf_std<0.01]
+    bench_Z = bench_Z.reindex(netvalue[c].index,method='ffill')#数据对齐
+    prior_z = bench_Z/netvalue[c]
+    prior_z.fillna(1,inplace=True)#将没有数据的地方填充成1
+    df_need=pd.concat([netvalue[c],bench_Z,prior_z],axis=1)
+    #抽取月底数据
+    df_need.index=pd.to_datetime(df_need.index,format="%Y%m%d")
+    month=np.unique(df_need.index.strftime("%Y-%m"))#获得所有的月份
+    #逐个月份提取数据
+    monthend=[]
+    for m in month:
+        monthend.append(df_need[m].index[-1].strftime("%Y-%m-%d"))
+    #得到每个月的月底数据
+    df_month_need = df_need.reindex(pd.to_datetime(monthend, format="%Y-%m-%d"))
+    df_month_need.columns=['Price','Z','ZtoPrice']
+    #加入宏观数据
+    df_month_need.index = df_month_need.index.strftime("%Y-%m")
+    excel_df.index = excel_df.index.strftime("%Y-%m")
+    df_month_need = df_month_need.reindex(excel_df.index)
+    df_month_need[['CPI','rf']] = excel_df
+    df_month_need.dropna(axis=0,inplace=True)
+    #需要错开时间处理（非常重要）
+    df_new_month=df_month_need.iloc[:-1]
+    df_new_month.index=df_month_need.index[1:]
+    df_new_month.insert(3,'R_t1',df_month_need.Price.pct_change())
+    consumption=np.cumprod(1+df_new_month.CPI)#consumption-消费
+    rt=df_new_month.R_t1#区间收益（就是这个月的收益）
+    #投资效用
+    uv = (1+df_new_month.rf)-rt*np.power(consumption,0.6)
+    df_new_month.insert(6,"utility",uv)
+    risk_aver=[]
+    for td in df_new_month.index:
+        if df_new_month.ZtoPrice.loc[td] ==1:
+            if df_new_month.R_t1.loc[td]>=0:
+                risk_aver.append(1)
+            else:
+                risk_aver.append(df_new_month.utility.loc[td]/np.power(-df_new_month.Price.loc[td]
+                                                                       *df_new_month.R_t1.loc[td],0.5))
+        elif df_new_month.ZtoPrice.loc[td] <=1:
+            if df_new_month.R_t1.loc[td]>=df_new_month.rf.loc[td]:
+                risk_aver.append(1)
+            else:
+                temp_uv1=df_new_month.utility.loc[td]-np.power(df_new_month.Price.loc[td]-df_new_month.Z.loc[td],0.5)
+                temp_uv2=abs(df_new_month.Z.loc[td]*df_new_month.rf.loc[td]-(df_new_month.Price.loc[td]*df_new_month.R_t1.loc[td]))
+                risk_aver.append(temp_uv1/np.power(temp_uv2,0.5))
+        else:
+            if df_new_month.R_t1.loc[td]>=0:
+                risk_aver.append(1)
+            elif df_new_month.R_t1.loc[td]<0:
+                part_risk_av=df_new_month.utility.loc[td] / np.power(-df_new_month.Price.loc[td]* df_new_month.R_t1.loc[td], 0.5)
+                risk_aver.append(part_risk_av+3*(df_new_month.ZtoPrice.loc[td]-1))
+
+
 
