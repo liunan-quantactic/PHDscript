@@ -62,6 +62,7 @@ engine=sql_connector(user2,pw2,h2,p,sch2)
 
 #宏观经济数据
 excel_df=pd.read_excel("G:\\BHSdata.xlsx",index_col=0)
+excel_df.index = excel_df.index.strftime("%Y-%m")
 #市场数据，不包括科创板
 m_query="select td,codenum,chg from market where td>20060630 and td<20210730 and (codenum like '00%' or codenum like '30%'" \
         " or codenum like '60%');"
@@ -78,9 +79,9 @@ netvalue_MA5=netvalue.rolling(5).mean()
 netvalue_MA10=netvalue.rolling(10).mean()
 netvalue_MA20=netvalue.rolling(20).mean()
 #开始个股处理
-code = netvalue.columns
-for c in code:
-    cdf=pd.concat([netvalue[c],netvalue_MA5[c],netvalue_MA10[c],netvalue_MA10[c]],axis=1)
+all_code = netvalue.columns
+for c in all_code:
+    cdf = pd.concat([netvalue[c],netvalue_MA5[c],netvalue_MA10[c],netvalue_MA10[c]],axis=1)
     cdf.fillna(0,inplace=True)
     cdf_std = cdf.std(axis=1)
     bench_Z = netvalue[c][cdf_std<0.01]
@@ -100,7 +101,6 @@ for c in code:
     df_month_need.columns=['Price','Z','ZtoPrice']
     #加入宏观数据
     df_month_need.index = df_month_need.index.strftime("%Y-%m")
-    excel_df.index = excel_df.index.strftime("%Y-%m")
     df_month_need = df_month_need.reindex(excel_df.index)
     df_month_need[['CPI','rf']] = excel_df
     df_month_need.dropna(axis=0,inplace=True)
@@ -109,9 +109,9 @@ for c in code:
     df_new_month.index=df_month_need.index[1:]
     df_new_month.insert(3,'R_t1',df_month_need.Price.pct_change())
     consumption=np.cumprod(1+df_new_month.CPI)#consumption-消费
-    rt=df_new_month.R_t1#区间收益（就是这个月的收益）
+    rt = df_new_month.R_t1#区间收益（就是这个月的收益）
     #投资效用
-    uv = (1+df_new_month.rf)-rt*np.power(consumption,0.6)
+    uv = (1+df_new_month.rf)-rt*(np.power(consumption,0.6)/0.6)
     df_new_month.insert(6,"utility",uv)
     risk_aver=[]
     for td in df_new_month.index:
@@ -119,7 +119,7 @@ for c in code:
             if df_new_month.R_t1.loc[td]>=0:
                 risk_aver.append(1)
             else:
-                risk_aver.append(df_new_month.utility.loc[td]/np.power(-df_new_month.Price.loc[td]
+                risk_aver.append(1+df_new_month.utility.loc[td]/np.power(-df_new_month.Price.loc[td]
                                                                        *df_new_month.R_t1.loc[td],0.5))
         elif df_new_month.ZtoPrice.loc[td] <=1:
             if df_new_month.R_t1.loc[td]>=df_new_month.rf.loc[td]:
@@ -127,13 +127,16 @@ for c in code:
             else:
                 temp_uv1=df_new_month.utility.loc[td]-np.power(df_new_month.Price.loc[td]-df_new_month.Z.loc[td],0.5)
                 temp_uv2=abs(df_new_month.Z.loc[td]*df_new_month.rf.loc[td]-(df_new_month.Price.loc[td]*df_new_month.R_t1.loc[td]))
-                risk_aver.append(temp_uv1/np.power(temp_uv2,0.5))
+                risk_aver.append(1+temp_uv1/np.power(temp_uv2,0.5))
         else:
             if df_new_month.R_t1.loc[td]>=0:
                 risk_aver.append(1)
             elif df_new_month.R_t1.loc[td]<0:
                 part_risk_av=df_new_month.utility.loc[td] / np.power(-df_new_month.Price.loc[td]* df_new_month.R_t1.loc[td], 0.5)
-                risk_aver.append(part_risk_av+3*(df_new_month.ZtoPrice.loc[td]-1))
+                risk_aver.append(1+part_risk_av+3*(df_new_month.ZtoPrice.loc[td]-1))
+    df_new_month.insert(7, "risk_av", risk_aver)
+    #df_new_month.to_csv("F:\\111.csv")
+    print(np.corrcoef(df_new_month.R_t1, df_new_month.risk_av)[0][1])
 
 
 

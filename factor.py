@@ -16,33 +16,82 @@ class MyThread(threading.Thread):
             return self.result
         except Exception:
             return None
-from quantactic import sql_connector,initialdata,mylog
-import sys
-sys.path.append("G:\\moudles")
-user = 'root'
-pw = '7026155@Liu'
-h = '127.0.0.1'
-p = 3306
-sch = 'astocks'
-engine = sql_connector(user,pw,h,p,sch)
+import os
+import datetime
+#定义log函数
+def mylog(logpath='F:\\'):
+    '''this moduel is to avoid printing log repeatly'''
+    import logging.handlers
+    logger = logging.getLogger('DBA')#logger名称
+    if 'log' not in os.listdir(logpath):#设置log的存储路径
+        final_path=os.mkdir(logpath+'log')
+    else:
+        final_path =logpath+'log'
+    final_log=final_path+'\\log_'+datetime.datetime.now().strftime('%Y%m%d-%H')+'.log'#设定log的文件名,该log为完整的log
+    error_log=final_path+'\\error_log_'+datetime.datetime.now().strftime('%Y%m%d-%H')+'.log'#设定error_log,该log只有出现错误才写入
+    if not logger.handlers: #如果logger.handlers列表为空，则添加，否则，直接去写日志，否则会出现重复记录
+        logger.setLevel(logging.DEBUG)#设定DEBUG以上的等级的log才会处理
+        handler1 = logging.FileHandler(final_log)#log输出到文件的handler
+        handler1.setLevel(logging.DEBUG)
+        handler2 = logging.FileHandler(error_log)#出现错误的log输出到文件的handler
+        handler2.setLevel(logging.ERROR)#log级别为ERROR
+        handler3 = logging.StreamHandler()#log输出到屏幕的handler
+        handler3.setLevel(logging.DEBUG)
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')#log的格式
+        handler1.setFormatter(formatter)
+        handler2.setFormatter(formatter)
+        handler3.setFormatter(formatter)
+        logger.addHandler(handler1)#添加handler
+        logger.addHandler(handler2)
+        logger.addHandler(handler3)
+    return logger
+#定义sql的接口函数
+def sql_connector(username,password,server,port,schema):
+    #########################################################
+    #使用Mysql.connector 链接Mysql server
+    #
+    #
+    #########################################################
+    from sqlalchemy import create_engine
+    '''This tool is for creating a connection with Mysql server'''
+    #write connector string as fromat mysql+engine://username:password@adress:port/schema
+    con_str = 'mysql+mysqlconnector://'+str(username)+':'+str(password)+'@'+str(server)+':'+str(port)+'/'+str(schema)
+    try:
+        con = create_engine(con_str)
+        #check if the connection is vaild
+        query = 'use '+str(schema)+';'
+        con.execute(query)
+        log_str='Connect to SERVER ' + str(server)+' SCHEMA '+str(schema) + ' successful !'
+        mylog().info(log_str)
+        return con
+    except Exception as e:
+        mylog().error(e)
+
+user2='root'
+pw2='7026155@Liu'
+h2='127.0.0.1'
+p=3306
+sch2='astocks'
+engine=sql_connector(user2,pw2,h2,p,sch2)
+
 save_path = "G:\\factors"
 #get all stocks codes
-code_query = 'select distinct codenum from astocks.market order by codenum;'
-all_code = np.array(engine.execute(code_query).fetchall())
+code_query ="select distinct codenum from astocks.market where codenum like '00%' or codenum like '30%'" \
+            " or codenum like '60%';"
+all_code = pd.read_sql(code_query,engine,index_col='codenum')
+all_code=all_code.index
 #得到行业指标的字典
-comp_query = 'select codenum,SW_c1,SW_name_CL1 from astocks.company;'
+comp_query = 'select codenum,SW_c1,SW_c1_name_CN from astocks.company;'
 ind_df = pd.read_sql(comp_query,engine)
 ind_np = ind_df.values[:,0:2]#找到对应的代码和具体行业的对应关系
 ind_class = np.unique(ind_df.values[:,1])
 comp_industry_dic = dict(ind_np)
 #提前得到benchmark以求得beta以及residual
-index_query = 'select td,chg from astocks.indexprice where codenum=\''+'000985.CSI'+'\';'
-index_df = pd.read_sql(index_query,con=engine,index_col='td')
-index_df.index=pd.to_datetime(index_df.index,format='%Y%m%d')
+index_df=pd.read_excel("G:\\000985.xlsx",index_col=0)
 def factormaker(codenum):
     '''get data--Factors based on data of change,close,volume,amount,total share,float share,free share,'''
     data_query = 'select td,codenum,chg,close,vol,amt,total_share,float_share,free_share ' \
-                 'from market where codenum=\''+codenum[0]+'\';'
+                 'from market where codenum=\''+codenum+'\';'
     market_df = pd.read_sql(data_query,engine,index_col='td',parse_dates=True)
     market_df.index = pd.to_datetime(market_df.index,format='%Y%m%d')
     market_df.drop_duplicates(inplace=True)
@@ -61,13 +110,13 @@ def factormaker(codenum):
                  'total_current_liabilities,total_noncurrent_liabilities,total_liabilities,' \
                  'total_shareholders_equity_including_MI,operating_revenue,operating_profit,' \
                  'total_profit,net_profit_including_minority_interest_income,deductedprofit,' \
-                 'net_operating_cashflow from finance where codenum=\''+codenum[0]+'\';'
+                 'net_operating_cashflow from finance where codenum=\''+codenum+'\';'
     raw_finance_df = pd.read_sql(data_query, engine, index_col='fd', parse_dates=True)
     '''get data--Factor based on data of dividend'''
-    data_query = 'select ex_dt,codenum,cash from astocks.dividend where codenum=\''+codenum[0]+'\';'
+    data_query = 'select ex_dt,codenum,cash from astocks.dividend where codenum=\''+codenum+'\';'
     raw_dividend_df = pd.read_sql(data_query, engine, index_col='ex_dt', parse_dates=True).fillna(0)
     raw_dividend_df.index = pd.to_datetime(raw_dividend_df.index, format='%Y%m%d')
-    raw_dividend_df.drop_duplicates()
+    raw_dividend_df=raw_dividend_df.drop_duplicates()
     #数据调整成两个月之后月底的数据
     finance_df = raw_finance_df.copy()
     finance_df.index = pd.to_datetime(raw_finance_df.index,format='%Y%m%d')+pd.tseries.offsets.MonthEnd(2)
@@ -78,7 +127,7 @@ def factormaker(codenum):
     #将数据取交集
     window = np.sort(np.intersect1d(market_df.index,index_df.index))
     endogen = market_df['chg'].reindex(window)/100
-    exogen = index_df['chg'].reindex(window)/100
+    exogen = index_df.reindex(window)/100
     exogen = sm.add_constant(exogen)
     def rolling_reg(endogen,exogen,freg='M',method=None):
         #将时间调整成frequency需要的时间，目前实现月的功能
@@ -188,20 +237,20 @@ def factormaker(codenum):
     FINANCE = pd.concat([MLEV,DTOA,DTOADIF,BLEV,ROS,ROA,CF2A,ROE],axis=1)
     FINANCE.columns = ['MLEV','DTOA','DTOADIF','BLEV','ROS','ROA','CF2A','ROE']
     #行业指标
-    code_ind = comp_industry_dic[codenum[0]]
+    code_ind = comp_industry_dic[codenum]
     #做虚拟变量
     all_ind = pd.DataFrame(np.zeros([len(market_df.index),len(ind_class)]),index=market_df.index,columns=ind_class)
     dummy = pd.DataFrame(np.ones([len(market_df.index),1]),index=market_df.index,columns=[code_ind])
     all_ind.update(dummy)
     all_factors = pd.concat([SIZE,factor_betas,MOM,BTM,TO,PORFIT,FINANCE,all_ind],axis=1)
-    all_factors.to_csv('G:\\factors\\'+ codenum[0]+'.csv')
-    mylog().info(codenum[0]+' \'s factors has been made !')
+    all_factors.to_csv('G:\\factors\\'+ codenum+'.csv')
+    mylog().info(codenum+' \'s factors has been made !')
     return
 for codenum in all_code:
     try:
         factormaker(codenum)
     except:
-        mylog().error('Some error happend in '+ codenum[0] + ' !')
+        mylog().error('Some error happend in '+ codenum + ' !')
 
 
 
