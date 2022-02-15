@@ -4,7 +4,7 @@ import os
 import datetime
 
 #定义log函数
-def mylog(logpath='F:\\'):
+def mylog(logpath='G:\\'):
     '''this moduel is to avoid printing log repeatly'''
     import logging.handlers
     logger = logging.getLogger('DBA')#logger名称
@@ -64,9 +64,9 @@ engine=sql_connector(user2,pw2,h2,p,sch2)
 excel_df=pd.read_excel("G:\\BHSdata.xlsx",index_col=0)
 excel_df.index = excel_df.index.strftime("%Y-%m")
 #市场数据，不包括科创板
-m_query="select td,codenum,chg from market where td>20060630 and td<20210730 and (codenum like '00%' or codenum like '30%'" \
+m_query = "select td,codenum,chg from market where td>20060630 and td<20210730 and (codenum like '00%' or codenum like '30%'" \
         " or codenum like '60%');"
-mdf=pd.read_sql(m_query,engine,index_col='td')
+mdf = pd.read_sql(m_query,engine,index_col='td')
 
 #将涨幅过高的数据删掉（就是有些新股首日以及数据长度太短的删掉）
 #透视表
@@ -78,8 +78,10 @@ netvalue=np.cumprod(1+pmdf,axis=0)
 netvalue_MA5=netvalue.rolling(5).mean()
 netvalue_MA10=netvalue.rolling(10).mean()
 netvalue_MA20=netvalue.rolling(20).mean()
-#开始个股处理
+
 all_code = netvalue.columns
+
+
 for c in all_code:
     cdf = pd.concat([netvalue[c],netvalue_MA5[c],netvalue_MA10[c],netvalue_MA10[c]],axis=1)
     cdf.fillna(0,inplace=True)

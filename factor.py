@@ -19,7 +19,7 @@ class MyThread(threading.Thread):
 import os
 import datetime
 #定义log函数
-def mylog(logpath='F:\\'):
+def mylog(logpath='G:\\'):
     '''this moduel is to avoid printing log repeatly'''
     import logging.handlers
     logger = logging.getLogger('DBA')#logger名称
@@ -131,7 +131,7 @@ def factormaker(codenum):
     exogen = sm.add_constant(exogen)
     def rolling_reg(endogen,exogen,freg='M',method=None):
         #将时间调整成frequency需要的时间，目前实现月的功能
-        adjust_index = endogen.resample(freg).sum().index.strftime('%Y-%m')
+        adjust_index = np.unique(endogen.index.strftime('%Y-%m'))
         params = []
         sigmas = []
         tvalues = []
@@ -246,7 +246,14 @@ def factormaker(codenum):
     all_factors.to_csv('G:\\factors\\'+ codenum+'.csv')
     mylog().info(codenum+' \'s factors has been made !')
     return
-for codenum in all_code:
+#开始个股处理
+already=os.listdir("G:\\factors")
+need=[]
+for c in all_code:
+    if c+'.csv' not in already:
+        need.append(c)
+
+for codenum in need:
     try:
         factormaker(codenum)
     except:
