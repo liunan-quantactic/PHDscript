@@ -8,8 +8,7 @@ from sqlalchemy import create_engine
 import statsmodels.api as sm
 import sys
 from scipy.stats import ttest_1samp,zscore,t,f
-sys.path.append("G:\\moudles")
-defaultpath='G:\\'
+defaultpath='F:\\'
 def mylog(logpath=defaultpath):
     '''this moduel is to avoid printing log repeatly'''
     import logging.handlers
@@ -49,16 +48,46 @@ def sql_connector(username,password,server,port,schema):
 
 engine = sql_connector('root','7026155@Liu','127.0.0.1','3306','astocks')
 #将所有有效的universe
-universe = [x[0:9] for x in os.listdir('G:\\factors')]
+universe = [x[0:9] for x in os.listdir('F:\\factors')]
+already=os.listdir('F:\\mfactor')
+need=[]
+for c in universe:
+    if c+'.csv' not in already:
+        need.append(c)
+universe=need
 num = len(universe)
+
+#市场数据，不包括科创板
+#-----------------------服务于风险厌恶的总数据-------------------
+#宏观经济数据
+excel_df=pd.read_excel("F:\\BHSdata.xlsx",index_col=0)
+excel_df.index = excel_df.index.strftime("%Y-%m")
+m_query = "select td,codenum,chg from market where td>20060630 and td<20210730 and (codenum like '00%' or codenum like '30%'" \
+        " or codenum like '60%');"
+mdf = pd.read_sql(m_query,engine,index_col='td')
+
+#将涨幅过高的数据删掉（就是有些新股首日以及数据长度太短的删掉）
+#透视表
+pmdf=pd.pivot_table(mdf,index=mdf.index,columns="codenum",values='chg')
+pmdf=pmdf/100  #单位修正
+pmdf.fillna(0,inplace=True)
+#计算累计净值
+netvalue=np.cumprod(1+pmdf,axis=0)
+netvalue_MA5=netvalue.rolling(5).mean()
+netvalue_MA10=netvalue.rolling(10).mean()
+netvalue_MA20=netvalue.rolling(20).mean()
+#------------------------------------------------------------
+
 i = 0
-#数据描述阶段将所有的数据都按照月份重新排列保存到一个文件中:
-Mdf = pd.DataFrame()
+#-----------------------------数据描述阶段将所有的数据都按照月份重新排列保存到一个文件中-----------------------
+
 for codenum in universe:
-    i = i+1 #count
+    i=i+1
     #数据调整的对应关系为本月月低factor对应下个月整月的累计收益
-    fac_df = pd.read_csv("G:\\factors\\"+codenum+'.csv',index_col=[0],parse_dates=True)
-    chg_df = pd.read_csv("G:\\backup\\market\\" + codenum + '.csv', index_col=[0], parse_dates=True)
+    fac_df = pd.read_csv("F:\\factors\\"+codenum+'.csv',index_col=[0],parse_dates=True)
+    m_query = "select td,codenum,chg from market where codenum=\'"+codenum+"\';"
+    chg_df=pd.read_sql(m_query,engine,index_col='td')
+    chg_df.index=pd.to_datetime(chg_df.index,format="%Y%m%d")
     accum_return = np.cumprod(1+chg_df['chg']/100)#累计收益
     accum_return = accum_return.to_frame()
     accum_return_OM = accum_return.resample('M').last()#截至每个月低的累计收益
@@ -68,20 +97,92 @@ for codenum in universe:
     adjust_fac_df = adjust_fac_df.reindex(return_per_mon.index)#每个月的收益是由上个月低的因子暴露决定的
     adjust_fac_df.insert(0,'chg',return_per_mon['chg'].values)
     adjust_fac_df.insert(0, 'codenum', np.array([codenum]*len(return_per_mon['chg'])))#把标的代码写进去
+    #-------------------------以下为风险厌恶系数-----------------------------
+    c=codenum
+    cdf = pd.concat([netvalue[c], netvalue_MA5[c], netvalue_MA10[c], netvalue_MA10[c]], axis=1)
+    cdf.fillna(0, inplace=True)
+    cdf_std = cdf.std(axis=1)
+    bench_Z = netvalue[c][cdf_std < 0.01]
+    bench_Z = bench_Z.reindex(netvalue[c].index, method='ffill')  # 数据对齐
+    prior_z = bench_Z / netvalue[c]
+    prior_z.fillna(1, inplace=True)  # 将没有数据的地方填充成1
+    df_need = pd.concat([netvalue[c], bench_Z, prior_z], axis=1)
+    # 抽取月底数据
+    df_need.index = pd.to_datetime(df_need.index, format="%Y%m%d")
+    month = np.unique(df_need.index.strftime("%Y-%m"))  # 获得所有的月份
+    # 逐个月份提取数据
+    monthend = []
+    for m in month:
+        monthend.append(df_need[m].index[-1].strftime("%Y-%m-%d"))
+    # 得到每个月的月底数据
+    df_month_need = df_need.reindex(pd.to_datetime(monthend, format="%Y-%m-%d"))
+    df_month_need.columns = ['Price', 'Z', 'ZtoPrice']
+    # 加入宏观数据
+    df_month_need.index = df_month_need.index.strftime("%Y-%m")
+    df_month_need = df_month_need.reindex(excel_df.index)
+    df_month_need[['CPI', 'rf']] = excel_df
+    df_month_need.dropna(axis=0, inplace=True)
+    # 需要错开时间处理（非常重要）
+    df_new_month = df_month_need.iloc[:-1]
+    df_new_month.index = df_month_need.index[1:]
+    df_new_month.insert(3, 'R_t1', df_month_need.Price.pct_change())
+    consumption = np.cumprod(1 + df_new_month.CPI)  # consumption-消费
+    rt = df_new_month.R_t1  # 区间收益（就是这个月的收益）
+    # 投资效用
+    uv = (1 + df_new_month.rf) - rt * (np.power(consumption, 0.6) / 0.6)
+    df_new_month.insert(6, "utility", uv)
+    risk_aver = []
+    for td in df_new_month.index:
+        if df_new_month.ZtoPrice.loc[td] == 1:
+            if df_new_month.R_t1.loc[td] >= 0:
+                risk_aver.append(1)
+            else:
+                risk_aver.append(1 + df_new_month.utility.loc[td] / np.power(-df_new_month.Price.loc[td]
+                                                                             * df_new_month.R_t1.loc[td], 0.5))
+        elif df_new_month.ZtoPrice.loc[td] <= 1:
+            if df_new_month.R_t1.loc[td] >= df_new_month.rf.loc[td]:
+                risk_aver.append(1)
+            else:
+                temp_uv1 = df_new_month.utility.loc[td] - np.power(df_new_month.Price.loc[td] - df_new_month.Z.loc[td],
+                                                                   0.5)
+                temp_uv2 = abs(df_new_month.Z.loc[td] * df_new_month.rf.loc[td] - (
+                            df_new_month.Price.loc[td] * df_new_month.R_t1.loc[td]))
+                risk_aver.append(1 + temp_uv1 / np.power(temp_uv2, 0.5))
+        else:
+            if df_new_month.R_t1.loc[td] >= 0:
+                risk_aver.append(1)
+            elif df_new_month.R_t1.loc[td] < 0:
+                part_risk_av = df_new_month.utility.loc[td] / np.power(
+                    -df_new_month.Price.loc[td] * df_new_month.R_t1.loc[td], 0.5)
+                risk_aver.append(1 + part_risk_av + 3 * (df_new_month.ZtoPrice.loc[td] - 1))
+    risk_aver=pd.DataFrame(risk_aver,index=df_new_month.index)
+    adjust_fac_df.index= adjust_fac_df.index.strftime("%Y-%m")
+    adjust_fac_df=adjust_fac_df.reindex(risk_aver.index)
+    adjust_fac_df['risk_aver']=risk_aver
     try:
-        adjust_fac_df.to_csv("G:\\mfactor\\"+codenum+".csv")
+        adjust_fac_df.to_csv("F:\\mfactor\\"+codenum+".csv")
         Mdf = pd.concat([Mdf,adjust_fac_df])#将新生成的数据写进文件
         mylog().info(codenum + ' \'factor data has been writing to file,process: '+str(i)+'/'+str(num))
     except:
         mylog().error(codenum + ' \'factor data has been wrong !,process: '+str(i)+'/'+str(num))
-    Mdf.to_csv("G:\\all_factor_month.csv")
+
+#--------------------------------全部月度数据整理完毕,所有数据写入一个文件----------------------------------------
+mfactor=os.listdir('F:\\mfactor')
+Mdf = pd.DataFrame()
+for codenum in mfactor:
+    print(codenum)
+    temp=pd.read_csv("F:\\mfactor\\" + codenum,index_col=0)
+    Mdf = pd.concat([Mdf, temp])  # 将新生成的数据写进文件
+Mdf.to_csv("F:\\all_factor_month.csv")
 
 
+
+#-------------------------------
 #取得研究数据
-obj_df = pd.read_csv("G:\\all_factor_month.csv",index_col=0,parse_dates=True)
+obj_df = pd.read_csv("f:\\all_factor_month.csv",index_col=0,parse_dates=True)
 #调整时间
 obj_df = obj_df[obj_df.index > '2007-01-01']
-
+df=obj_df
 def factordescribe(df, facname, n=3):
         '''the argument of df should include factors and  change of price and weight vector if required'''
         '''df--the original data
@@ -90,21 +191,30 @@ def factordescribe(df, facname, n=3):
            weight--the weight of component of portfolio'''
         '''step 2 按照因子大小分位数分组'''
         # 得所需要的时间
-        period = np.unique(df.index)
+
         all_market_return_cv = []#计算市场整体的收益情况，以计算alpha以及进行T检验
         all_market_return_ev = []
         all_port_return_cv = []
         all_port_return_ev = []
+        df=df[df['beta'].isna()==False]
+        period = np.unique(df.index)
         for t in period:
             tdf = df.loc[t]
             all_weight = tdf['total_EV']/tdf['total_EV'].sum()
             all_market_return_cv.append(np.sum(tdf['chg'] * all_weight))
             all_market_return_ev.append(tdf['chg'].mean())
             #因子分组是从小到大按照quantile进行分组 P3>P2>P1
-            if facname != 'CD2EV':
+
+            '''ctdf=tdf.sort_values(facname)
+            div_num=int(len(ctdf[facname])/n)
+            class_res=["P1"]*div_num+["P2"]*div_num+["P3"]*(len(ctdf[facname])-(n-1)*div_num)
+            ctdf.insert(0, 'class', class_res)'''
+
+            '''if facname == 'CD2EV':
                 classes = np.array(pd.qcut(tdf[facname],n, ['P1', 'P2', 'P3']).tolist())
             else:#有部分数据如分红，区分度很小无法用quantile的方式分组，只能按照正常的bins均分
-                classes = np.array(pd.cut(tdf[facname], n, labels=['P1', 'P2', 'P3']).tolist())
+                classes = np.array(pd.cut(tdf[facname], n, labels=['P1', 'P2', 'P3']).tolist())'''
+            classes = np.array(pd.qcut(tdf[facname], n, ['P1', 'P2', 'P3']).tolist())
             tdf.insert(0, 'class', classes)
             gdf = tdf.groupby('class')
             T_port_return_cv = []
@@ -139,7 +249,7 @@ def factordescribe(df, facname, n=3):
         accum_all_port_return_cv[['P3-P1']].plot(ax=ax_02, color='orange', rot=0,fontsize=10)
         ax_02.set_title('Excess Return of Factor Mimicing Portfolio(CW)',fontsize=12)
         plt.subplots_adjust(hspace=0.2)
-        plt.savefig('G:\\output\\factorperformance\\'+facname+'_cw.png')
+        plt.savefig('F:\\output\\factorperformance\\'+facname+'_cw.png')
         fig = plt.figure(figsize=(10, 6), dpi=120)
         ax_01 = fig.add_subplot(2, 1, 1)
         title_str = 'Performance of '+facname+' factor portfolios (EW)'
@@ -149,7 +259,7 @@ def factordescribe(df, facname, n=3):
         accum_all_port_return_ev[['P3-P1']].plot(ax=ax_02, color='orange', rot=0,fontsize=10)
         ax_02.set_title('Excess Return of Factor Mimicing Portfolio(EW)',fontsize=12)
         plt.subplots_adjust(hspace=0.2)
-        plt.savefig('G:\\output\\factorperformance\\'+facname+'_ew.png')
+        plt.savefig('f:\\output\\factorperformance\\'+facname+'_ew.png')
         #平均年化收益进行对比
         acc_port_pct_chg_cv = accum_all_port_return_cv.pct_change(12) #每12个月的滚动收益率并去除空值
         acc_port_pct_chg_cv.dropna(inplace=True)
@@ -181,14 +291,18 @@ def factordescribe(df, facname, n=3):
         describe = np.stack([all_mean,all_std,all_ttest,all_pvalue,all_alpha,all_sharp],axis=0)
         describe = pd.DataFrame(describe,index=['mean','std','t_stat','p_value','alpha','sharp'],
                               columns=['P1_CW','P2_CW','P3_CW','P3-P1_CW','P1_EW','P2_EW','P3_EW','P3-P1_EW'])
-        describe.to_csv('G:\\output\\factorperformance\\'+facname+'_factordescribe.csv')
+        describe.to_csv('f:\\output\\factorperformance\\'+facname+'_factordescribe.csv')
         return
 #得到total_EV的整体描述
 all_facname = ['total_EV','free_EV','float_EV','beta','MOMOM','MOM3T2','MOM12T2',
                'BTM','STOM','STOQ','STOY','CETOP','EBITDA2EV','PETTM','GPOY','GPO3Y',
                'CD2EV','MLEV','DTOA','DTOADIF','BLEV','ROS','ROA','CF2A','ROE']
+all_facname = ['total_EV','free_EV','float_EV','beta','MOMOM','MOM3T2','MOM12T2',
+               'BTM','STOM','STOQ','STOY','CETOP','EBITDA2EV','PETTM','GPOY','GPO3Y',
+               'CD2EV','MLEV','DTOA','DTOADIF','BLEV','ROS','ROA','CF2A','ROE']
 for facname in all_facname:
     try:
+        print(facname)
         factordescribe(obj_df, facname)
         mylog().info(facname+' \'s description is over ! ')
     except:
