@@ -311,12 +311,17 @@ for facname in all_facname:
 
 #Fama-Macbeth method
 #取得研究数据
-obj_df = pd.read_csv("G:\\all_factor_month.csv",index_col=0,parse_dates=True)
+obj_df = pd.read_csv("F:\\all_factor_month.csv",index_col=0,parse_dates=True)
 #调整时间
 obj_df = obj_df[obj_df.index > '2007-01-01']
-all_facname = ['total_EV','free_EV','float_EV','beta','MOMOM','MOM3T2','MOM12T2',
+all_facname = ['risk_aver','total_EV','free_EV','float_EV','MOMOM','MOM3T2','MOM12T2',
                'BTM','STOM','STOQ','STOY','CETOP','EBITDA2EV','PETTM','GPOY','GPO3Y',
-               'CD2EV','MLEV','DTOA','DTOADIF','BLEV','ROS','ROA','CF2A','ROE']
+               'CD2EV','MLEV','DTOA','DTOADIF','BLEV','ROS','CF2A','ROE']
+
+
+all_facname = ['risk_aver','total_EV','free_EV','float_EV','MOMOM','MOM3T2','MOM12T2',
+               'BTM','STOM','STOQ','STOY','CETOP','EBITDA2EV','PETTM','GPOY','GPO3Y',
+               'CD2EV','MLEV','DTOA','DTOADIF','BLEV','ROS','CF2A','ROE']
 
 
 def FamaMac(df, facname, method=None, categ='style',reg='OLS'):
@@ -329,7 +334,8 @@ def FamaMac(df, facname, method=None, categ='style',reg='OLS'):
             spot_std = []
             for t in period:
                 tdf = df.loc[t]
-                tdf.dropna(inplace=True)
+                tdf=tdf[tdf[facname].isna()==False]
+                tdf = tdf[tdf['codenum'].isna() == False]
                 tdf = tdf.replace([np.inf,-np.inf],0)
                 CS_ret = tdf['chg']
                 CS_Weight=tdf['total_EV']/tdf['total_EV'].sum()
@@ -337,9 +343,9 @@ def FamaMac(df, facname, method=None, categ='style',reg='OLS'):
                 CS_fac = tdf[facname]
                 if method == 'log':
                     CS_fac = np.log(CS_fac)
-                CS_fac = zscore(CS_fac)  # 得到标准分数
+                CS_fac = zscore(CS_fac.values)  # 得到标准分数
                 CS_fac = sm.add_constant(CS_fac)
-                model = sm.GLS(CS_ret, CS_fac,W).fit()
+                model = sm.OLS(CS_ret, CS_fac).fit()
                 spot_beta.append(model.params[1])
                 spot_std.append(model.bse[1])
                 print(str(t) + '.....' + facname)
@@ -349,7 +355,8 @@ def FamaMac(df, facname, method=None, categ='style',reg='OLS'):
             beta = T_reg['beta'].mean()
             sigma = T_reg['std'].mean()
             tvalue = beta / sigma
-            pd.DataFrame(np.stack([beta, sigma, tvalue]),index=['beta', 'sigma', 'tvalue']).to_csv('G:\\factor_beta\\FM_' + facname + '_sum.csv')
+            pd.DataFrame(np.stack([beta, sigma, tvalue]),index=['beta', 'sigma', 'tvalue']).to_csv\
+                ('G:\\factor_beta\\FM_' + facname + '_sum.csv')
     elif reg=='WLS':
         if categ == 'style':
             period = np.unique(df.index)
@@ -357,7 +364,9 @@ def FamaMac(df, facname, method=None, categ='style',reg='OLS'):
             spot_std = []
             for t in period:
                 tdf = df.loc[t]
-                tdf.dropna(inplace=True)
+                tdf = tdf[tdf[facname].isna() == False]
+                tdf = tdf[tdf['codenum'].isna() == False]
+                tdf = tdf[tdf['total_EV'].isna() == False]
                 tdf = tdf.replace([np.inf, -np.inf], 0)
                 CS_ret = tdf['chg']
                 CS_Weight = tdf['total_EV'] / tdf['total_EV'].sum()
@@ -373,15 +382,16 @@ def FamaMac(df, facname, method=None, categ='style',reg='OLS'):
                 print(str(t) + '.....' + facname)
             T_reg = pd.DataFrame(np.stack([spot_beta, spot_std], axis=1), index=period, columns=['beta', 'std'])
             T_reg = T_reg.resample('Y').mean()
-            T_reg.to_csv('G:\\factor_beta_gls\\FM_' + facname + '.csv')
+            T_reg.to_csv('F:\\factor_beta_gls\\FM_' + facname + '.csv')
             beta = T_reg['beta'].mean()
             sigma = T_reg['std'].mean()
             tvalue = beta / sigma
             pd.DataFrame(np.stack([beta, sigma, tvalue]), index=['beta', 'sigma', 'tvalue']).to_csv(
-                'G:\\factor_beta_gls\\FM_' + facname + '_sum.csv')
+                'F:\\factor_beta_gls\\FM_' + facname + '_sum.csv')
     elif reg == 'GMM':
         # 求出因子残差进一步求因子之间的相关性
-        universe = np.unique(df['codenum'])
+
+        universe = np.unique(df['codenum'].dropna())
         period = np.unique(df.index)
         all_residual = []
         all_code = []
@@ -410,9 +420,8 @@ def FamaMac(df, facname, method=None, categ='style',reg='OLS'):
                 residual = model.resid.reindex(period)
                 residual.fillna(0, inplace=True)
                 all_residual.append(residual.values.tolist())
-                print codenum
         GRS_resid = pd.DataFrame(np.array(all_residual).T, columns=all_code)
-        GRS_resid.to_csv('G:\\factor_beta_gmm\\'+facname+'_resid.csv')
+        GRS_resid.to_csv('F:\\factor_beta_gmm\\'+facname+'_resid.csv')
         #计算出个股之间残差的协方差矩阵#
         V = GRS_resid.cov()
         if np.all(np.linalg.eigvals(V.values)>=0)==False:
@@ -423,7 +432,9 @@ def FamaMac(df, facname, method=None, categ='style',reg='OLS'):
             spot_std = []
             for t in period:
                 tdf = df.loc[t]
-                tdf.dropna(inplace=True)
+                tdf = tdf[tdf[facname].isna() == False]
+                tdf = tdf[tdf['codenum'].isna() == False]
+                tdf = tdf[tdf['total_EV'].isna() == False]
                 T_V=V[tdf['codenum']].loc[tdf['codenum']]
                 tdf = tdf.replace([np.inf, -np.inf], 0)
                 CS_ret = tdf['chg']
@@ -441,12 +452,12 @@ def FamaMac(df, facname, method=None, categ='style',reg='OLS'):
                 print(str(t) + '.....' + facname)
             T_reg = pd.DataFrame(np.stack([spot_beta, spot_std], axis=1), index=period, columns=['beta', 'std'])
             T_reg = T_reg.resample('Y').mean()
-            T_reg.to_csv('G:\\factor_beta_gmm\\FM_' + facname + '.csv')
+            T_reg.to_csv('F:\\factor_beta_gmm\\FM_' + facname + '.csv')
             beta = T_reg['beta'].mean()
             sigma = T_reg['std'].mean()
             tvalue = beta / sigma
             pd.DataFrame(np.stack([beta, sigma, tvalue]), index=['beta', 'sigma', 'tvalue']).to_csv(
-                'G:\\factor_beta_gmm\\FM_' + facname + '_sum.csv')
+                'f:\\factor_beta_gmm\\FM_' + facname + '_sum.csv')
         '''beta0 = np.dot(np.linalg.inv(np.dot(np.dot(X.T, np.kron(np.kron(Z, W), Z.T)), X)),
                        np.dot(np.dot(X.T, np.dot(np.dot(Z, W), Z.T)), y))
         residual1 = np.mat(y1 - np.dot(X, beta0)).T
@@ -693,7 +704,7 @@ def GRStest(df,facname):
             residual = model.resid.reindex(period)
             residual.fillna(0,inplace=True)
             all_residual.append(residual.values.tolist())
-            print codenum
+            print(codenum)
     GRS_TS = pd.DataFrame(np.stack([all_ts_reg_alpha,all_ts_reg_R],axis=1),index=all_code,columns=['alpha','R_adj'])
     GRS_resid = pd.DataFrame(np.array(all_residual).T,columns=all_code)
     GRS_TS.dropna(inplace=True)
@@ -701,8 +712,8 @@ def GRStest(df,facname):
     mean_all_ts_reg_alpha=GRS_TS['alpha'].mean()
     x=[mean_all_ts_reg_alpha,mean_ts_reg_R]
     GRS_TS.append(pd.DataFrame([x],index=['average'],columns=['alpha','R_adj']))
-    GRS_TS.to_csv('G:\\GRS_TS.csv')
-    GRS_resid.to_csv('G:\\GRS_resid.csv')
+    GRS_TS.to_csv('F:\\GRS_TS.csv')
+    GRS_resid.to_csv('F:\\GRS_resid.csv')
 
 
     #横截面回归
@@ -724,7 +735,7 @@ def GRStest(df,facname):
         CS_avg_fac.append(t_CS_fac)
     CS_avg_fac=pd.DataFrame(CS_avg_fac,index=period,columns=[facname])
     CS_avg_fac_mark = pd.concat([CS_avg_fac,accum_index_return_chg],axis=1)
-    CS_model = sm.OLS(CS_avg_ret,sm.add_constant(CS_avg_fac_mark)).fit()
+    CS_model = sm.OLS(CS_avg_ret,sm.add_constant(CS_avg_fac)).fit()
 
 
 
