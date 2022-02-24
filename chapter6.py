@@ -4,10 +4,11 @@ import datetime
 import os
 import statsmodels.api as sm
 
-df=pd.read_csv("F:\\all_factor_month.csv",index_col=0,parse_dates=True)
+df=pd.read_csv("G:\\all_factor_month.csv",index_col=0,parse_dates=True)
 
 '''GRS test 需要返回所有GRS F 统计量，平均alpha，平均的时间序列回归的R square 横截面的R square'''
-# 先进行时间序列上的回归
+##----------------- 先进行时间序列上的回归--------------------------
+#得到：时间序列回归的alpha 以及 Rsquare 均值
 universe = np.unique(df[df['codenum'].isna()==False].codenum)
 period = np.unique(df.index)
 all_ts_reg_R = []
@@ -27,14 +28,14 @@ for codenum in universe:
     fac.fillna(0, inplace=True)
     ret = ret.reindex(fac.index)
     ret = ret.fillna(0)  # 对于上市日期晚于起始日期的个股填充空值
-    model = sm.OLS(ret, fac).fit()
+    model = sm.OLS(ret, fac).fit()#不带截距项的回归
     if np.isnan(model.rsquared_adj):
         continue
     else:
         ts_rsquare = model.rsquared_adj  # 使用调整过的Rsquare
         all_ts_reg_R.append(ts_rsquare)
         const_fac = sm.add_constant(fac)
-        model = sm.OLS(ret, const_fac).fit()
+        model = sm.OLS(ret, const_fac).fit()#带截距项的回归
         ts_alpha = model.params.loc['const']
         all_ts_reg_alpha.append(ts_alpha)
         all_code.append(codenum)
@@ -73,4 +74,7 @@ for t in period:
 CS_avg_fac = pd.DataFrame(CS_avg_fac, index=period, columns=[facname])
 CS_avg_fac_mark = pd.concat([CS_avg_fac, accum_index_return_chg], axis=1)
 CS_model = sm.OLS(CS_avg_ret, sm.add_constant(CS_avg_fac_mark)).fit()
+
+
+
 
