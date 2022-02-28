@@ -4,7 +4,7 @@ import datetime
 import os
 import statsmodels.api as sm
 
-df=pd.read_csv("G:\\all_factor_month.csv",index_col=0,parse_dates=True)
+df=pd.read_csv("F:\\all_factor_month.csv",index_col=0,parse_dates=True)
 
 '''GRS test 需要返回所有GRS F 统计量，平均alpha，平均的时间序列回归的R square 横截面的R square'''
 ##----------------- 先进行时间序列上的回归--------------------------
@@ -51,8 +51,8 @@ mean_ts_reg_R = GRS_TS['R_adj'].mean()
 mean_all_ts_reg_alpha = GRS_TS['alpha'].mean()
 x = [mean_all_ts_reg_alpha, mean_ts_reg_R]
 GRS_TS.append(pd.DataFrame([x], index=['average'], columns=['alpha', 'R_adj']))
-GRS_TS.to_csv('G:\\GRS_TS.csv')
-GRS_resid.to_csv('G:\\GRS_resid.csv')
+GRS_TS.to_csv('F:\\GRS_TS.csv')
+GRS_resid.to_csv('F:\\GRS_resid.csv')
 
 # 横截面回归
 # 不加权处理可以更好的反映因子组合对于收益的解释能力
@@ -73,7 +73,7 @@ for t in period:
     CS_avg_fac.append(t_CS_fac)
 CS_avg_fac = pd.DataFrame(CS_avg_fac, index=period, columns=[facname])
 CS_avg_fac_mark = pd.concat([CS_avg_fac, accum_index_return_chg], axis=1)
-CS_model = sm.OLS(CS_avg_ret, sm.add_constant(CS_avg_fac_mark)).fit()
+CS_model = sm.OLS(CS_avg_ret, sm.add_constant(CS_avg_fac)).fit()
 
 
 
