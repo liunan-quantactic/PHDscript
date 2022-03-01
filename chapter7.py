@@ -56,11 +56,43 @@ p_chg_df=p_chg_df[codes].fillna(0)
 w=[]
 for t in p_chg_df.index:
     c=matrix(-1*p_chg_df.loc[t],tc='d')
-    G=matrix(-1*np.diag(np.ones(len(codes))),tc='d')
-    h=matrix(np.zeros(len(codes)),tc='d')
+    R1m=-1*np.diag(np.ones(len(codes)))
+    R2m=np.diag(np.ones(len(codes)))
+    G=matrix(np.vstack([R1m,R2m]),tc='d')
+    h=matrix(np.hstack([np.zeros(len(codes)),np.array([0.05]*len(codes))]),tc='d')
     A=matrix(np.ones(len(codes)),tc='d').T
     b=matrix(1,tc='d')
     sol = solvers.qp(XXBQB, c, G, h, A, b)
     w.append(list(sol['x']))
 
 W_all_NRA=pd.DataFrame(w,index=p_chg_df.index,columns=codes)
+
+#加权计算收益
+W_all_NRA=pd.read_csv("F:\\weight_all.csv",index_col=0,parse_dates=True)
+codes=W_all_NRA.columns
+df = pd.read_csv("F:\\all_factor_month.csv",index_col=0,parse_dates=True)
+req_df=df[df['codenum'].isin(codes)]
+chg_df=pd.pivot_table(req_df,index=req_df.index,columns='codenum',values='chg')
+chg_df=chg_df.fillna(0)
+chg_df[chg_df>2]=0
+port_return=[]
+for t in W_all_NRA.index:
+    tchg=chg_df.loc[t]
+    tweight=W_all_NRA.loc[t]
+    w_return=tchg*tweight
+    port_return.append(np.sum(w_return))
+#市值加权
+w_df=pd.pivot_table(req_df,index=req_df.index,columns='codenum',values='total_EV')
+w_df=w_df.fillna(0)
+all_EV=w_df.sum(axis=1)
+port_return=[]
+for t in W_all_NRA.index:
+    tchg=chg_df.loc[t]
+    t_EV=w_df.loc[t]
+    tweight=t_EV/all_EV.loc[t]
+    w_return=tchg*tweight
+    port_return.append(np.sum(w_return))
+
+
+port_return_df=pd.DataFrame(port_return,index=W_all_NRA.index)
+port_return_df.to_csv("F:\\port_return_EV.csv")
