@@ -5,16 +5,16 @@ import pandas as pd
 import statsmodels.api as sm
 
 #全部数据
-df = pd.read_csv("G:\\all_factor_month.csv",index_col=0,parse_dates=True)
+df = pd.read_csv("F:\\all_factor_month.csv",index_col=0,parse_dates=True)
 #获得目标数据
-need_df=df[["chg","codenum","beta","EBITDA2EV","free_EV","MOMOM","STOM"]]
+need_df=df[["chg","codenum","beta","EBITDA2EV","free_EV","MOMOM","STOM","risk_aver"]]
 need_df=need_df[need_df["codenum"].isna()==False]
 #-------------------求因子之间的相关性---------------------------------
 #按时间排列因子
 period=np.unique(need_df.index)
 mean=[]
 for t in period:
-    mean.append(need_df[["beta","EBITDA2EV","free_EV","MOMOM","STOM"]].loc[t].mean(axis=0))
+    mean.append(need_df[["beta","EBITDA2EV","free_EV","MOMOM","STOM","risk_aver"]].loc[t].mean(axis=0))
 ts_df=pd.DataFrame(mean,index=period)
 ts_df=ts_df.fillna(method='bfill')
 Q=ts_df.corr().values
@@ -96,3 +96,8 @@ for t in W_all_NRA.index:
 
 port_return_df=pd.DataFrame(port_return,index=W_all_NRA.index)
 port_return_df.to_csv("F:\\port_return_EV.csv")
+
+##################################################
+port_return_df=pd.read_csv("G:\\port_return.csv",index_col=0,parse_dates=True)
+port_cum_df=np.cumprod(1+port_return_df)
+port_cum_df.plot(color=['g','b','r'],style=['-.','--','-'])
